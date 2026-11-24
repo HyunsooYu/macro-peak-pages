@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta http-equiv="Content-Security-Policy" content="default-src &#x27;none&#x27;; style-src &#x27;unsafe-inline&#x27;; script-src &#x27;sha256-Lb2cy61zTk4ycp6K+l0JkQOxyb2a8rsWoF7/wNqyJPU=&#x27; &#x27;sha256-Js4LLgpHOuDNlJysVH7+5AdTDddhXyw3tOaUCF6pQFo=&#x27;; img-src data:; frame-src &#x27;self&#x27;; base-uri &#x27;none&#x27;; form-action &#x27;none&#x27;">
+<meta http-equiv="Content-Security-Policy" content="default-src &#x27;none&#x27;; style-src &#x27;unsafe-inline&#x27;; script-src &#x27;sha256-v1BxngZTnpdmWcXLY70ngei+Fh47LPUBuKmJLCO2L+s=&#x27; &#x27;sha256-Js4LLgpHOuDNlJysVH7+5AdTDddhXyw3tOaUCF6pQFo=&#x27;; img-src data:; frame-src &#x27;self&#x27;; base-uri &#x27;none&#x27;; form-action &#x27;none&#x27;">
 <title>Macro-Peak · Global Peak Continuum · 2026-W47</title>
 <style>:root {
   color-scheme: light;
@@ -954,11 +954,6 @@ const PeakDNA = (() => {
     element.append(top,body);out.append(element);
     return out;
   }
-  async function load(tag) {
-    if(!tag)return null;
-    const bytes=Uint8Array.from(atob(tag.textContent.trim()),c=>c.charCodeAt(0));
-    return JSON.parse(await new Response(new Blob([bytes]).stream().pipeThrough(new DecompressionStream('gzip'))).text());
-  }
   function asOfAsset(asset,cutoff) {
     const observations=[];
     for(const point of asset.observations){
@@ -1192,7 +1187,7 @@ const PeakDNA = (() => {
       html('p','가격 기준·통화·시점이 같은 사례를 비교합니다. 수익 결과를 열기 전에 과거 형태의 거리순으로 선택합니다.'),
       html('p','표본외 검증은 사후 복원 가격으로 수행했습니다. 실제 발행 신호와 실행 가격은 신호 발행과 추적에서 확인합니다.'));
   }
-  return {load,asOfAsset,runs,inspector,bind,state:key=>states[key]??key,symbol:key=>symbols[key]??'·'};
+  return {asOfAsset,runs,inspector,bind,state:key=>states[key]??key,symbol:key=>symbols[key]??'·'};
 })();
 
 'use strict';
@@ -1341,12 +1336,25 @@ function continuumFallback(error) {
   root.dataset.continuumError=String(error);
 }
 
+async function readContinuumPacket(tag) {
+  if(!tag)return null;
+  let bytes;
+  if(tag.dataset.src){
+    const response=await fetch(tag.dataset.src,{credentials:'omit'});
+    if(!response.ok)throw new Error('workspace packet unavailable');
+    bytes=await response.arrayBuffer();
+    const digest=new Uint8Array(await crypto.subtle.digest('SHA-256',bytes));
+    if([...digest].map(x=>x.toString(16).padStart(2,'0')).join('')!==tag.dataset.sha256)
+      throw new Error('unmatched workspace packet hash');
+  }else bytes=Uint8Array.from(atob(tag.textContent.trim()),c=>c.charCodeAt(0));
+  const stream=new Blob([bytes]).stream().pipeThrough(new DecompressionStream('gzip'));
+  return JSON.parse(await new Response(stream).text());
+}
+
 (async () => {
   const get = id => document.getElementById(id);
-  const compressed=Uint8Array.from(atob(get('continuum-data').textContent.trim()),c=>c.charCodeAt(0));
-  const stream=new Blob([compressed]).stream().pipeThrough(new DecompressionStream('gzip'));
-  const packet=JSON.parse(await new Response(stream).text());
-  const dna=typeof PeakDNA==='undefined'?null:await PeakDNA.load(get('peak-dna-data'));
+  const [packet,dna]=await Promise.all([readContinuumPacket(get('continuum-data')),
+                                      readContinuumPacket(get('peak-dna-data'))]);
   const workspace=packet.workspace?PeakWorkspace.create(packet,dna):null;
   const shared=workspace?.state??{selection:{kind:'none'}};
   const assets = new Map(packet.assets.map(a => [a.asset_id, a]));
